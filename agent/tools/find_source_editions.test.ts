@@ -34,20 +34,28 @@ describe('find_source_editions', () => {
 
   it('returns an empty chunks array when nothing matches (no new editions)', async () => {
     const client = fakeClient([]);
-    const result = await tool.execute({ sourceKey: 'dev', mode: 'daily' }, { client } as any);
+    const result = await tool.execute({ sourceKey: 'dev', mode: 'weekly' }, { client } as any);
     expect(result.chunks).toEqual([]);
   });
 
-  it("daily mode only includes yesterday's AM and PM editions, and filters server-side with updatedAfter", async () => {
+  it('weekly mode returns every unarchived edition as one chunk labeled by the dates it covers', async () => {
     const client = fakeClient([
-      { id: 'old', title: 'Dev Twitter List: October 10, 2026 AM Edition', tags: [], savedAt: '2026-10-10T09:00:00Z' },
-      { id: 'am', title: 'Dev Twitter List: October 16, 2026 AM Edition', tags: [], savedAt: '2026-10-16T09:00:00Z' },
-      { id: 'pm', title: 'Dev Twitter List: October 16, 2026 PM Edition', tags: [], savedAt: '2026-10-16T21:00:00Z' },
+      { id: 'sun', title: 'Dev Twitter List: October 18, 2026 PM Edition', tags: [], savedAt: '2026-10-18T21:00:00Z' },
+      { id: 'wed', title: 'Dev Twitter List: October 14, 2026 AM Edition', tags: [], savedAt: '2026-10-14T09:00:00Z' },
+      { id: 'mon', title: 'Dev Twitter List: October 12, 2026 AM Edition', tags: [], savedAt: '2026-10-12T09:00:00Z' },
+      { id: 'other', title: 'Learn Twitter List: October 12, 2026 AM Edition', tags: [], savedAt: '2026-10-12T09:00:00Z' },
     ]);
-    const result = await tool.execute({ sourceKey: 'dev', mode: 'daily' }, { client, now: new Date('2026-10-17T09:00:00Z') } as any);
-    expect(idsOf(result).sort()).toEqual(['am', 'pm']);
+    const result = await tool.execute({ sourceKey: 'dev', mode: 'weekly' }, { client, now: new Date('2026-10-19T09:00:00Z') } as any);
+    expect(result.chunks).toHaveLength(1);
+    expect(result.chunks[0].dateRangeLabel).toBe('Oct 12 – Oct 18, 2026');
+    expect(idsOf(result).sort()).toEqual(['mon', 'sun', 'wed']);
+  });
+
+  it('weekly mode looks back 21 days server-side so a missed run is picked up next time', async () => {
+    const client = fakeClient([]);
+    await tool.execute({ sourceKey: 'dev', mode: 'weekly' }, { client, now: new Date('2026-10-19T09:00:00Z') } as any);
     expect(client.listDocuments).toHaveBeenCalledWith(
-      expect.objectContaining({ location: 'feed', category: 'rss', updatedAfter: '2026-10-15T09:00:00.000Z' }),
+      expect.objectContaining({ location: 'feed', category: 'rss', updatedAfter: '2026-09-28T09:00:00.000Z' }),
     );
   });
 

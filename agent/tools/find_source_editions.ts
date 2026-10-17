@@ -11,20 +11,12 @@ type FoundChunk = {
   editions: Array<{ documentId: string; title: string; existingTags: string[] }>;
 };
 
-function yesterdayUtc(now: Date): string {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1));
-  const year = d.getUTCFullYear();
-  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
 export default defineTool({
   description:
     'Find unarchived Dev/Learn Twitter-list editions for a source and group them into date-range chunks. Returns document ids and titles only — use read_editions to get their content.',
   inputSchema: z.object({
     sourceKey: z.enum(['dev', 'learn']),
-    mode: z.enum(['daily', 'catchup']),
+    mode: z.enum(['weekly', 'catchup']),
     maxEditions: z.number().int().positive().optional(),
   }),
   async execute({ sourceKey, mode, maxEditions }, ctx: any): Promise<{ chunks: FoundChunk[] }> {
@@ -32,11 +24,12 @@ export default defineTool({
     const now: Date = ctx?.now ?? new Date();
     const source = SOURCES.find((s) => s.key === sourceKey)!;
 
-    // Yesterday's editions were added yesterday, so in daily mode two days of
-    // lookback is plenty and keeps this to about one page instead of scanning
-    // the whole feed.
+    // Weekly mode takes whatever is still unarchived rather than a fixed
+    // 7-day window, so a missed run is picked up by the next one. Three weeks
+    // of lookback covers that and keeps the scan to a few pages instead of the
+    // whole feed.
     const updatedAfter =
-      mode === 'daily' ? new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString() : undefined;
+      mode === 'weekly' ? new Date(now.getTime() - 21 * 24 * 60 * 60 * 1000).toISOString() : undefined;
 
     const matched: Array<{ documentId: string; title: string; existingTags: string[]; date: string }> = [];
     let pageCursor: string | undefined;
@@ -65,15 +58,15 @@ export default defineTool({
       }
     } while (pageCursor);
 
-    const inMode = mode === 'daily' ? matched.filter((m) => m.date === yesterdayUtc(now)) : matched;
-    const kept = maxEditions ? inMode.slice(0, maxEditions) : inMode;
+    const kept = maxEditions ? matched.slice(0, maxEditions) : matched;
 
     if (kept.length === 0) {
       return { chunks: [] };
     }
 
     const editionMetas: EditionMeta[] = kept.map((m) => ({ documentId: m.documentId, date: m.date }));
-    const chunks = chunkEditionsByDateRange(editionMetas, 10);
+    // One digest for a weekly run; catchup spreads the backlog over at most 10.
+    const chunks = chunkEditionsByDateRange(editionMetas, mode === 'weekly' ? 1 : 10);
     const byId = new Map(kept.map((m) => [m.documentId, m]));
 
     return {

@@ -23,10 +23,10 @@ An [eve](https://eve.dev) agent that digests Dillon's Readwise Reader "Dev" and 
 npm exec -- eve dev --no-ui
 ```
 
-This starts the dev server (default `http://127.0.0.1:2000`) without the interactive TUI, so it can be driven by curl or another process. `eve dev` never fires schedules on their cron cadence — use the dispatch route to trigger `daily-digest` on demand while iterating:
+This starts the dev server (default `http://127.0.0.1:2000`) without the interactive TUI, so it can be driven by curl or another process. `eve dev` never fires schedules on their cron cadence — use the dispatch route to trigger `weekly-digest` on demand while iterating:
 
 ```bash
-curl -X POST http://127.0.0.1:2000/eve/v1/dev/schedules/daily-digest
+curl -X POST http://127.0.0.1:2000/eve/v1/dev/schedules/weekly-digest
 ```
 
 Sending a session message directly also works, for testing a specific `sourceKey`/`mode` combination:
@@ -34,7 +34,7 @@ Sending a session message directly also works, for testing a specific `sourceKey
 ```bash
 curl -X POST http://127.0.0.1:2000/eve/v1/session \
   -H 'content-type: application/json' \
-  -d '{"message":"Run the daily digest for sourceKey dev in mode daily."}'
+  -d '{"message":"Run the weekly digest for sourceKey dev in mode weekly."}'
 ```
 
 Local dev needs a model credential to actually run a turn (not just boot) — either `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` for a direct provider model, or `AI_GATEWAY_API_KEY` / a linked Vercel project (`vercel env pull`, after `eve link`) for the Gateway-style model string this agent uses (`anthropic/claude-sonnet-5`).
@@ -48,13 +48,13 @@ eve deploy  # installs dependencies, runs `vercel deploy --prod --logs`
 
 Before deploying, add `READWISE_API_TOKEN` to the Vercel project's environment variables (Vercel dashboard → Settings → Environment Variables) — `.env.local` is never uploaded by `eve deploy`.
 
-After deploy, confirm in the Vercel dashboard under **Settings → Cron Jobs** that `daily-digest` is registered.
+After deploy, confirm in the Vercel dashboard under **Settings → Cron Jobs** that `weekly-digest` is registered.
 
-**Timezone note:** `agent/schedules/daily-digest.ts` runs at `0 9 * * *` UTC, which is 5am EDT (America/New_York, confirmed from Vercel's GMT-4 log timestamps) and 4am EST after the clocks go back. Vercel Cron is UTC-only with no DST handling, so the local time shifts by an hour twice a year. Change the cron expression and redeploy if a different time is wanted.
+**Schedule:** `agent/schedules/weekly-digest.ts` runs Mondays at `0 9 * * 1` UTC, which is 5am EDT (America/New_York) and 4am EST after the clocks go back. Vercel Cron is UTC-only with no DST handling, so the local time shifts by an hour twice a year. Each run writes one digest per list covering everything still unarchived (looking back up to 21 days), so a missed run is picked up by the next one. Change the cron expression and redeploy for a different day or time.
 
 ## One-time backlog catch-up
 
-The daily run only looks at "yesterday", so the existing backlog is digested once by hand. It's planned locally (no 300s function limit) and run one chunk per agent session, which keeps each session's context and runtime bounded:
+The weekly run only looks at recent editions (three weeks back), so the existing backlog is digested once by hand. It's planned locally (no 300s function limit) and run one chunk per agent session, which keeps each session's context and runtime bounded:
 
 ```bash
 set -a; source .env.local; set +a
@@ -70,7 +70,7 @@ Each digest is capped by design at 10 per list and titled with the date range it
 
 ## How fetching works
 
-- `find_source_editions` lists editions (ids and titles only). In daily mode it filters server-side with `updatedAfter`, so it needs about one page instead of scanning the whole feed.
+- `find_source_editions` lists editions (ids and titles only). In weekly mode it filters server-side with `updatedAfter` (21-day lookback), so it needs about one page instead of scanning the whole feed.
 - `read_editions` reads content by scanning feed pages with `withHtmlContent=true` (about 100 documents per request, versus one request per document), time-boxed to stay under Vercel's 300s function limit, with a cursor to resume.
 - `create_digest_and_finalize_sources` writes the digest first, and only then tags and archives sources. It reuses an existing digest with the same title rather than creating a duplicate, because Reader does not dedupe `/save/` by url.
 - Reader's API is rate-limited (20 requests/min for `/list/`); `lib/readwise-client.ts` retries 429s up to 5 times honoring `Retry-After`.

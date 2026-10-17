@@ -28,8 +28,8 @@ machine needing to be on.
 
 ## Goals
 
-- Once a day at 5am, automatically digest the previous day's new Dev and
-  Learn Reader editions, in a lens appropriate to each list (Dev = tools/
+- Once a week (Mondays at 5am Eastern), automatically digest the Dev and
+  Learn Reader editions that are still unarchived, in a lens appropriate to each list (Dev = tools/
   React/AI/product takes; Learn = founder/writer/business/content takes).
 - One catch-up pass that clears the *entire* existing backlog of unarchived
   Dev/Learn editions (not just a recent window), capped at 10 digest
@@ -125,10 +125,10 @@ machine needing to be on.
   Dev/Learn feeds (full backlog, no staleness cutoff), capped at **10
   digest documents per list**, each digest's title/body clearly stating
   the date range of editions it covers.
-- Ongoing cadence: **once daily at 5am**, covering the previous day's
-  Dev/Learn editions (both that day's AM and PM pulls, by then both
-  landed). One fresh digest per list per day — not per edition, not twice
-  daily.
+- Ongoing cadence: **once weekly, Mondays at 5am Eastern** (changed from
+  daily after the backlog run). Each run covers everything still unarchived
+  for a list, so a missed run is caught by the next. One digest per list per
+  week — not per edition.
 - Digest lifecycle: digests are never auto-archived or auto-deleted by the
   agent. They sit as Dillon's own queue of "things reader-eve already went
   through" until he manually archives or deletes each one after reading
