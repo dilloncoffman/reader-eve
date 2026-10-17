@@ -1,6 +1,6 @@
 // Runs the one-time backlog catch-up: one agent session per pre-planned chunk,
-// oldest first, verifying Reader after each. Safe to restart — chunks whose
-// digest already exists are skipped. Stops at the first problem.
+// oldest first. Safe to restart: it works from the editions still unarchived in
+// Reader, so finished chunks are not repeated. Stops at the first failure.
 // Usage: tsx scripts/run-catchup.ts <plan.json> <agentUrl> [dev|learn]
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -16,22 +16,8 @@ const plan = JSON.parse(readFileSync(planPath, 'utf8')) as Record<string, any[]>
 const client = createReadwiseClient(process.env.READWISE_API_TOKEN!);
 const labelFor = (key: string) => (key === 'dev' ? 'Dev' : 'Learn');
 
-async function digestExists(title: string): Promise<boolean> {
-  let pageCursor: string | undefined;
-  do {
-    const page = await client.listDocuments({ tag: 'reader-eve-digest', limit: 100, pageCursor });
-    if (page.results.some((d) => d.title === title)) return true;
-    pageCursor = page.nextPageCursor ?? undefined;
-  } while (pageCursor);
-  return false;
-}
-
 async function runChunk(sourceKey: string, label: string, ids: string[]): Promise<void> {
   const title = `${labelFor(sourceKey)} Digest — ${label}`;
-  if (await digestExists(title)) {
-    console.log(`skip (digest exists): ${title}`);
-    return;
-  }
   const message = `Digest this chunk: sourceKey ${sourceKey}, dateRangeLabel "${label}", documentIds ${JSON.stringify(ids)}.`;
   console.log(`\n== ${title} (${ids.length} editions) — ${new Date().toISOString()}`);
   let out = '';
@@ -47,47 +33,45 @@ async function runChunk(sourceKey: string, label: string, ids: string[]): Promis
   }
   const parsed = JSON.parse(out);
   console.log('agent said:', String(parsed.outcome?.message ?? parsed.outcome?.status).slice(0, 600));
-  if (!(await digestExists(title))) {
-    console.log(`STOP: no digest titled "${title}" found in Reader after this run.`);
-    process.exit(1);
-  }
-  console.log(`ok: digest present — ${title}`);
 }
 
-// The agent has been seen to pass only part of a chunk's ids to the archive
-// step. After a source finishes, find planned editions still sitting in the
-// feed and digest them in a follow-up session covering their own date range.
-async function findStragglers(sourceKey: string): Promise<Array<{ documentId: string; title: string; date: string }>> {
-  const planned = new Map<string, string>(
-    plan[sourceKey].flatMap((c: any) => c.editions.map((e: any) => [e.documentId, e.title])),
-  );
-  const listLabel = SOURCES.find((s) => s.key === sourceKey)!.listLabel;
-  const stragglers: Array<{ documentId: string; title: string; date: string }> = [];
+// State lives in Reader, not in digests: an edition still in the feed has not
+// been digested and archived yet. (Digests get deleted by hand once reviewed,
+// so their absence says nothing.) Returns planned editions still in the feed.
+async function pendingEditions(sourceKey: string): Promise<Set<string>> {
+  const planned = new Set<string>(plan[sourceKey].flatMap((c: any) => c.editions.map((e: any) => e.documentId)));
+  const pending = new Set<string>();
   let pageCursor: string | undefined;
   do {
     const page = await client.listDocuments({ location: 'feed', category: 'rss', limit: 100, pageCursor });
-    for (const d of page.results) {
-      if (!planned.has(d.id)) continue;
-      const parsed = parseEditionTitle(d.title, listLabel);
-      if (parsed) stragglers.push({ documentId: d.id, title: d.title, date: parsed.date });
-    }
+    for (const d of page.results) if (planned.has(d.id)) pending.add(d.id);
     pageCursor = page.nextPageCursor ?? undefined;
   } while (pageCursor);
-  return stragglers;
+  return pending;
 }
 
 async function main() {
+  const listLabels = Object.fromEntries(SOURCES.map((s) => [s.key, s.listLabel]));
   for (const sourceKey of ['dev', 'learn']) {
     if (only && only !== sourceKey) continue;
-    for (const chunk of plan[sourceKey]) {
-      await runChunk(sourceKey, chunk.dateRangeLabel, chunk.editions.map((e: any) => e.documentId));
-    }
+    // The second pass picks up editions the agent left out of the archive step.
     for (let pass = 1; pass <= 2; pass++) {
-      const stragglers = await findStragglers(sourceKey);
-      console.log(`\n${sourceKey}: ${stragglers.length} planned editions still unarchived (pass ${pass})`);
-      if (stragglers.length === 0) break;
-      const [followUp] = chunkEditionsByDateRange(stragglers.map((s) => ({ documentId: s.documentId, date: s.date })), 1);
-      await runChunk(sourceKey, followUp.dateRangeLabel, followUp.documentIds);
+      const pending = await pendingEditions(sourceKey);
+      console.log(`\n${sourceKey}: ${pending.size} planned editions still unarchived (pass ${pass})`);
+      if (pending.size === 0) break;
+      for (const chunk of plan[sourceKey]) {
+        const todo = chunk.editions.filter((e: any) => pending.has(e.documentId));
+        if (todo.length === 0) continue;
+        // A whole chunk keeps its planned label; a partial one is labeled by the dates it actually covers.
+        const label =
+          todo.length === chunk.editions.length
+            ? chunk.dateRangeLabel
+            : chunkEditionsByDateRange(
+                todo.map((e: any) => ({ documentId: e.documentId, date: parseEditionTitle(e.title, listLabels[sourceKey])!.date })),
+                1,
+              )[0].dateRangeLabel;
+        await runChunk(sourceKey, label, todo.map((e: any) => e.documentId));
+      }
     }
   }
   console.log('\nAll chunks done.');
