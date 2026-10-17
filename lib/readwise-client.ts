@@ -91,8 +91,10 @@ function chunk<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+const MAX_429_RETRIES = 5;
+
 export function createReadwiseClient(apiToken: string, fetchImpl: typeof fetch = fetch): ReadwiseClient {
-  async function request(path: string, init: RequestInit = {}, isRetry = false): Promise<Response> {
+  async function request(path: string, init: RequestInit = {}, attempt = 0): Promise<Response> {
     const response = await fetchImpl(`${BASE_URL}${path}`, {
       ...init,
       headers: {
@@ -102,10 +104,10 @@ export function createReadwiseClient(apiToken: string, fetchImpl: typeof fetch =
       },
     });
 
-    if (response.status === 429 && !isRetry) {
+    if (response.status === 429 && attempt < MAX_429_RETRIES) {
       const retryAfterSeconds = Number(response.headers.get('Retry-After') ?? '0');
-      await new Promise((resolve) => setTimeout(resolve, retryAfterSeconds * 1000));
-      return request(path, init, true);
+      await new Promise((resolve) => setTimeout(resolve, Math.max(retryAfterSeconds, 1) * 1000));
+      return request(path, init, attempt + 1);
     }
 
     if (!response.ok) {

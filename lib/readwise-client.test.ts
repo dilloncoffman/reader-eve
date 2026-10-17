@@ -102,13 +102,55 @@ describe('createReadwiseClient', () => {
   });
 
   it('retries once after a 429 with Retry-After, then succeeds', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(new Response('', { status: 429, headers: { 'Retry-After': '0' } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ count: 0, nextPageCursor: null, results: [] }), { status: 200 }));
-    const client = createReadwiseClient('tok', fetchMock);
-    const result = await client.listDocuments({ location: 'feed' });
-    expect(result.count).toBe(0);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(new Response('', { status: 429, headers: { 'Retry-After': '0' } }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ count: 0, nextPageCursor: null, results: [] }), { status: 200 }));
+      const client = createReadwiseClient('tok', fetchMock);
+      const resultPromise = client.listDocuments({ location: 'feed' });
+      await vi.runAllTimersAsync();
+      const result = await resultPromise;
+      expect(result.count).toBe(0);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries across several consecutive 429s before succeeding', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(new Response('', { status: 429, headers: { 'Retry-After': '0' } }))
+        .mockResolvedValueOnce(new Response('', { status: 429, headers: { 'Retry-After': '0' } }))
+        .mockResolvedValueOnce(new Response('', { status: 429, headers: { 'Retry-After': '0' } }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ count: 0, nextPageCursor: null, results: [] }), { status: 200 }));
+      const client = createReadwiseClient('tok', fetchMock);
+      const resultPromise = client.listDocuments({ location: 'feed' });
+      await vi.runAllTimersAsync();
+      const result = await resultPromise;
+      expect(result.count).toBe(0);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('throws after exhausting retries on persistent 429s', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 429, headers: { 'Retry-After': '0' } }));
+      const client = createReadwiseClient('tok', fetchMock);
+      const resultPromise = client.listDocuments({ location: 'feed' });
+      const assertion = expect(resultPromise).rejects.toThrow(/429/);
+      await vi.runAllTimersAsync();
+      await assertion;
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
