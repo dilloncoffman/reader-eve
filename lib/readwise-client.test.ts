@@ -67,43 +67,70 @@ describe('createReadwiseClient', () => {
     expect(firstBody.updates[0]).toEqual({ id: 'd0', location: 'archive' });
   });
 
-  it('getDocumentContent requests withHtmlContent and converts rw-embedded-tweet HTML to readable text', async () => {
+  it('listDocuments passes tag, updatedAfter and withHtmlContent, and location is optional', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ count: 0, nextPageCursor: null, results: [] }), { status: 200 }),
+    );
+    const client = createReadwiseClient('tok', fetchMock);
+    await client.listDocuments({ tag: 'reader-eve-digest', updatedAfter: '2026-10-15T00:00:00.000Z', withContent: true });
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('tag=reader-eve-digest');
+    expect(url).toContain('updatedAfter=2026-10-15T00%3A00%3A00.000Z');
+    expect(url).toContain('withHtmlContent=true');
+    expect(url).not.toContain('location=');
+  });
+
+  it('listDocuments with withContent returns compact readable text for rw-embedded-tweet html', async () => {
     const html = `<div><div>
-<article class="rw-embedded-tweet" data-rw-tweet-id="2111387957072445938">
+<article class="rw-embedded-tweet" data-rw-tweet-id="2111266470865088656"><span><a href="https://twitter.com/acemarke">
+<svg><path d="M0"></path></svg>
+         @acemarke retweeted</a></span>
 <header class="rw-embedded-tweet-header">
 <div><img src="https://pbs.twimg.com/profile_images/1.jpg"/></div>
 <div>
-<span><a href="https://twitter.com/shadcn">shadcn</a></span>
-<span><a href="https://twitter.com/shadcn">@shadcn</a></span>
+<span><a href="https://twitter.com/replayio">Replay</a></span>
+<span><a href="https://twitter.com/replayio">@replayio</a></span>
 </div>
+<div><a href="https://twitter.com/replayio/status/2111266470865088656"><svg aria-label="X"><path d="M1"></path></svg></a></div>
 </header>
 <main>
-<p></p><p>I need early access to whatever model Anthropic is using internally to build Claude Code.</p><p></p>
+<p></p><p>Gaps don't disappear when you move fast.</p><p><a href="https://twitter.com/natgj11">@natgj11</a>, founder of <a href="https://example.com/x">Swoon</a></p><p></p>
 </main>
-<footer class="rw-embedded-tweet-footer" data-rw-created-timestamp="1792229091000">
-<span><a href="https://twitter.com/shadcn/status/2111387957072445938">Posted Oct 17, 2026 at 9:24AM</a></span>
+<footer class="rw-embedded-tweet-footer" data-rw-created-timestamp="1792166676000">
+<span><a href="https://twitter.com/replayio/status/2111266470865088656">Posted Oct 16, 2026 at 4:04PM</a></span>
 </footer>
 </article>
 </div></div>`;
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ count: 1, nextPageCursor: null, results: [{ content: null, html_content: html }] }), { status: 200 }),
+      new Response(
+        JSON.stringify({
+          count: 1,
+          nextPageCursor: null,
+          results: [{ id: 'd1', title: 'Dev Twitter List: October 16, 2026 PM Edition', tags: {}, saved_at: '2026-10-16T21:00:00Z', content: null, html_content: html }],
+        }),
+        { status: 200 },
+      ),
     );
     const client = createReadwiseClient('tok', fetchMock);
-    const content = await client.getDocumentContent('d1');
-
-    expect(fetchMock.mock.calls[0][0]).toContain('withHtmlContent=true');
-    expect(content).toContain('shadcn');
-    expect(content).toContain('I need early access to whatever model Anthropic is using internally to build Claude Code.');
-    expect(content).toContain('https://twitter.com/shadcn/status/2111387957072445938');
+    const page = await client.listDocuments({ location: 'feed', withContent: true });
+    expect(page.results[0].content).toBe(
+      [
+        '@acemarke retweeted',
+        'Replay (@replayio) — Posted Oct 16, 2026 at 4:04PM — https://twitter.com/replayio/status/2111266470865088656',
+        "Gaps don't disappear when you move fast.",
+        '@natgj11, founder of Swoon (https://example.com/x)',
+      ].join('\n'),
+    );
   });
 
-  it('getDocumentContent returns an empty string when there are no tweet articles in the HTML', async () => {
+  it('listDocuments without withContent leaves content undefined', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ count: 1, nextPageCursor: null, results: [{ content: null, html_content: '<div></div>' }] }), { status: 200 }),
+      new Response(JSON.stringify({ count: 1, nextPageCursor: null, results: [{ id: 'd1', title: 't', tags: {}, saved_at: 'x' }] }), { status: 200 }),
     );
     const client = createReadwiseClient('tok', fetchMock);
-    const content = await client.getDocumentContent('d1');
-    expect(content).toBe('');
+    const page = await client.listDocuments({ location: 'feed' });
+    expect(page.results[0].content).toBeUndefined();
+    expect(fetchMock.mock.calls[0][0]).not.toContain('withHtmlContent');
   });
 
   it('retries once after a 429 with Retry-After, then succeeds', async () => {

@@ -5,10 +5,10 @@ import { SOURCES } from '../../lib/sources';
 import { parseEditionTitle } from '../../lib/title-matching';
 import { chunkEditionsByDateRange, type EditionMeta } from '../../lib/chunking';
 
-type FetchedChunk = {
+type FoundChunk = {
   chunkId: string;
   dateRangeLabel: string;
-  editions: Array<{ documentId: string; title: string; existingTags: string[]; content: string }>;
+  editions: Array<{ documentId: string; title: string; existingTags: string[] }>;
 };
 
 function yesterdayUtc(now: Date): string {
@@ -20,22 +20,35 @@ function yesterdayUtc(now: Date): string {
 }
 
 export default defineTool({
-  description: "Fetch unarchived Dev/Learn Twitter-list editions for a source, grouped into date-range chunks.",
+  description:
+    'Find unarchived Dev/Learn Twitter-list editions for a source and group them into date-range chunks. Returns document ids and titles only — use read_editions to get their content.',
   inputSchema: z.object({
     sourceKey: z.enum(['dev', 'learn']),
     mode: z.enum(['daily', 'catchup']),
     maxEditions: z.number().int().positive().optional(),
   }),
-  async execute({ sourceKey, mode, maxEditions }, ctx: any): Promise<{ chunks: FetchedChunk[] }> {
+  async execute({ sourceKey, mode, maxEditions }, ctx: any): Promise<{ chunks: FoundChunk[] }> {
     const client: ReadwiseClient = ctx?.client ?? createReadwiseClient(process.env.READWISE_API_TOKEN!);
     const now: Date = ctx?.now ?? new Date();
     const source = SOURCES.find((s) => s.key === sourceKey)!;
+
+    // Yesterday's editions were added yesterday, so in daily mode two days of
+    // lookback is plenty and keeps this to about one page instead of scanning
+    // the whole feed.
+    const updatedAfter =
+      mode === 'daily' ? new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString() : undefined;
 
     const matched: Array<{ documentId: string; title: string; existingTags: string[]; date: string }> = [];
     let pageCursor: string | undefined;
     let pages = 0;
     do {
-      const page = await client.listDocuments({ location: 'feed', category: 'rss', limit: 100, pageCursor });
+      const page = await client.listDocuments({
+        location: 'feed',
+        category: 'rss',
+        limit: 100,
+        pageCursor,
+        updatedAfter,
+      });
       for (const doc of page.results) {
         const parsed = parseEditionTitle(doc.title, source.listLabel);
         if (!parsed) continue;
@@ -47,7 +60,7 @@ export default defineTool({
       // rest of the (large, mixed) feed doesn't need to be scanned.
       if (maxEditions && matched.length >= maxEditions) break;
       if (pages >= 50) {
-        console.warn(`fetch_source_editions: hit 50-page pagination guard for source "${sourceKey}"`);
+        console.warn(`find_source_editions: hit 50-page pagination guard for source "${sourceKey}"`);
         break;
       }
     } while (pageCursor);
@@ -59,29 +72,19 @@ export default defineTool({
       return { chunks: [] };
     }
 
-    // Sequential, not Promise.all: Reader's /list/ endpoint (which this also
-    // hits) is rate-limited to 20 req/min, and catchup mode can match
-    // hundreds of editions. Firing them all at once would blow well past the
-    // limit before the client's single-retry-after-429 logic has any chance
-    // to help.
-    const withContent: Array<(typeof kept)[number] & { content: string }> = [];
-    for (const m of kept) {
-      withContent.push({ ...m, content: await client.getDocumentContent(m.documentId) });
-    }
-
-    const editionMetas: EditionMeta[] = withContent.map((m) => ({ documentId: m.documentId, date: m.date }));
+    const editionMetas: EditionMeta[] = kept.map((m) => ({ documentId: m.documentId, date: m.date }));
     const chunks = chunkEditionsByDateRange(editionMetas, 10);
-    const byId = new Map(withContent.map((m) => [m.documentId, m]));
+    const byId = new Map(kept.map((m) => [m.documentId, m]));
 
-    const fetchedChunks: FetchedChunk[] = chunks.map((chunk, index) => ({
-      chunkId: `${sourceKey}-${index}`,
-      dateRangeLabel: chunk.dateRangeLabel,
-      editions: chunk.documentIds.map((id) => {
-        const m = byId.get(id)!;
-        return { documentId: m.documentId, title: m.title, existingTags: m.existingTags, content: m.content };
-      }),
-    }));
-
-    return { chunks: fetchedChunks };
+    return {
+      chunks: chunks.map((chunk, index) => ({
+        chunkId: `${sourceKey}-${index}`,
+        dateRangeLabel: chunk.dateRangeLabel,
+        editions: chunk.documentIds.map((id) => {
+          const m = byId.get(id)!;
+          return { documentId: m.documentId, title: m.title, existingTags: m.existingTags };
+        }),
+      })),
+    };
   },
 });

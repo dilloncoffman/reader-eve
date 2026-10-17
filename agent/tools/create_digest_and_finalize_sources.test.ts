@@ -7,8 +7,7 @@ const tool = toolDefault as { execute: (input: unknown, ctx: unknown) => Promise
 
 function fakeClient(overrides: Partial<ReadwiseClient> = {}): ReadwiseClient {
   return {
-    listDocuments: vi.fn(),
-    getDocumentContent: vi.fn(),
+    listDocuments: vi.fn().mockResolvedValue({ count: 0, nextPageCursor: null, results: [] }),
     createDocument: vi.fn().mockResolvedValue({ id: 'digest1', url: 'https://read.readwise.io/new/read/digest1' }),
     getDocumentTags: vi.fn().mockResolvedValue(['shortlist']),
     updateDocumentTags: vi.fn().mockResolvedValue(undefined),
@@ -50,6 +49,21 @@ describe('create_digest_and_finalize_sources', () => {
     expect(client.getDocumentTags).not.toHaveBeenCalled();
     expect(client.updateDocumentTags).not.toHaveBeenCalled();
     expect(client.bulkArchive).not.toHaveBeenCalled();
+  });
+
+  it('reuses an existing digest with the same title instead of creating a duplicate', async () => {
+    const client = fakeClient({
+      listDocuments: vi.fn().mockResolvedValue({
+        count: 1,
+        nextPageCursor: null,
+        results: [{ id: 'existing1', title: 'Dev Digest — Oct 16, 2026', tags: ['reader-eve-digest', 'dev'], savedAt: 'x' }],
+      }),
+    });
+    const result = await tool.execute(baseInput, { client } as any);
+    expect(client.listDocuments).toHaveBeenCalledWith(expect.objectContaining({ tag: 'reader-eve-digest' }));
+    expect(client.createDocument).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, digestId: 'existing1', digestUrl: 'https://read.readwise.io/read/existing1' });
+    expect(client.bulkArchive).toHaveBeenCalledWith(['s1', 's2']);
   });
 
   it('archives non-review-worthy docs with no tag change at all', async () => {
