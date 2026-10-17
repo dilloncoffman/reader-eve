@@ -25,7 +25,7 @@ The request already gives you `sourceKey`, `dateRangeLabel` and `documentIds`. D
    - `digestTitle`: exactly `"Dev Digest — <dateRangeLabel>"` or `"Learn Digest — <dateRangeLabel>"`.
    - `digestMarkdown`: the full digest body, per the lens skill's criteria.
    - `reviewWorthyDocumentIds`: the subset of the editions you read that contain something worth Dillon reviewing himself and possibly highlighting in Readwise later. An empty list is correct when nothing rises to that bar.
-3. Only once `digestMarkdown` is final, call `create_digest_and_finalize_sources` with `sourceKey`, `dateRangeLabel`, `digestTitle`, `digestMarkdown`, the `documentId`s of the editions you actually read as `sourceDocumentIds`, and your `reviewWorthyDocumentIds`.
+3. Only once `digestMarkdown` is final, call `create_digest_and_finalize_sources` with `sourceKey`, `dateRangeLabel`, `digestTitle`, `digestMarkdown`, the `documentId` of **every** edition `read_editions` returned as `sourceDocumentIds`, and your `reviewWorthyDocumentIds`. Do not truncate or sample that list: count the editions you read, and make sure `sourceDocumentIds` has exactly that many entries. Editions you leave out are not archived and will never be digested.
 4. Move to the next chunk only after that call returns.
 
 Get `digestMarkdown` right before step 3. Calling `create_digest_and_finalize_sources` again with the same title does not change the digest that already exists, so do not resubmit to fix wording.
