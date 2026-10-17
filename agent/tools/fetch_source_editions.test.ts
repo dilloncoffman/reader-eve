@@ -70,6 +70,25 @@ describe('fetch_source_editions', () => {
     expect(client.getDocumentContent).toHaveBeenCalledTimes(5);
   });
 
+  it('maxEditions stops paginating once enough matching editions are found, keeping the newest', async () => {
+    const page1 = ['a', 'b', 'c'].map((id, i) => ({
+      id,
+      title: `Dev Twitter List: October ${17 - i}, 2026 AM Edition`,
+      tags: [],
+      savedAt: '2026-10-17T09:00:00Z',
+    }));
+    const client = fakeClient([]);
+    client.listDocuments = vi
+      .fn()
+      .mockResolvedValueOnce({ count: 6, nextPageCursor: 'page2', results: page1 })
+      .mockResolvedValueOnce({ count: 6, nextPageCursor: null, results: [] });
+    const result = await tool.execute({ sourceKey: 'dev', mode: 'catchup', maxEditions: 2 }, { client } as any);
+    const ids = result.chunks.flatMap((c: any) => c.editions.map((e: any) => e.documentId));
+    expect(ids.sort()).toEqual(['a', 'b']);
+    expect(client.listDocuments).toHaveBeenCalledTimes(1);
+    expect(client.getDocumentContent).toHaveBeenCalledTimes(2);
+  });
+
   it('catchup mode never returns more than 10 chunks', async () => {
     const docs = Array.from({ length: 40 }, (_, i) => ({
       id: `d${i}`,

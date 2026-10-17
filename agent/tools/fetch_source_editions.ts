@@ -24,8 +24,9 @@ export default defineTool({
   inputSchema: z.object({
     sourceKey: z.enum(['dev', 'learn']),
     mode: z.enum(['daily', 'catchup']),
+    maxEditions: z.number().int().positive().optional(),
   }),
-  async execute({ sourceKey, mode }, ctx: any): Promise<{ chunks: FetchedChunk[] }> {
+  async execute({ sourceKey, mode, maxEditions }, ctx: any): Promise<{ chunks: FetchedChunk[] }> {
     const client: ReadwiseClient = ctx?.client ?? createReadwiseClient(process.env.READWISE_API_TOKEN!);
     const now: Date = ctx?.now ?? new Date();
     const source = SOURCES.find((s) => s.key === sourceKey)!;
@@ -42,13 +43,17 @@ export default defineTool({
       }
       pageCursor = page.nextPageCursor ?? undefined;
       pages += 1;
+      // Feed results are newest-first, so once we have enough matches the
+      // rest of the (large, mixed) feed doesn't need to be scanned.
+      if (maxEditions && matched.length >= maxEditions) break;
       if (pages >= 50) {
         console.warn(`fetch_source_editions: hit 50-page pagination guard for source "${sourceKey}"`);
         break;
       }
     } while (pageCursor);
 
-    const kept = mode === 'daily' ? matched.filter((m) => m.date === yesterdayUtc(now)) : matched;
+    const inMode = mode === 'daily' ? matched.filter((m) => m.date === yesterdayUtc(now)) : matched;
+    const kept = maxEditions ? inMode.slice(0, maxEditions) : inMode;
 
     if (kept.length === 0) {
       return { chunks: [] };
