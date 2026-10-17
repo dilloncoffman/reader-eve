@@ -1,4 +1,14 @@
+import { marked } from 'marked';
+
 const BASE_URL = 'https://readwise.io/api/v3';
+const DIGEST_URL_BASE = 'https://reader-eve.vercel.app/digest';
+
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
 
 export type ReaderDocument = {
   id: string;
@@ -160,7 +170,17 @@ export function createReadwiseClient(apiToken: string, fetchImpl: typeof fetch =
     async createDocument({ title, markdown, location, category, tags }) {
       const response = await request('/save/', {
         method: 'POST',
-        body: JSON.stringify({ title, markdown, location, category, tags }),
+        // Reader's /save/ requires a url and takes html. A deterministic url
+        // per title means a replayed save updates the same document rather
+        // than creating a duplicate.
+        body: JSON.stringify({
+          url: `${DIGEST_URL_BASE}/${slugify(title)}`,
+          html: await marked.parse(markdown),
+          title,
+          location,
+          category,
+          tags,
+        }),
       });
       const body = (await response.json()) as { id: string; url: string };
       return { id: body.id, url: body.url };

@@ -40,6 +40,11 @@ describe('createReadwiseClient', () => {
     });
     expect(result).toEqual({ id: 'new1', url: 'https://read.readwise.io/new/read/new1' });
     expect(fetchMock.mock.calls[0][0]).toContain('/save/');
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.url).toBe('https://reader-eve.vercel.app/digest/dev-digest-oct-17-2026');
+    expect(body.html).toContain('<h1>Dev Digest</h1>');
+    expect(body.markdown).toBeUndefined();
+    expect(body.tags).toEqual(['reader-eve-digest', 'dev']);
   });
 
   it('updateDocumentTags PATCHes /update/<id>/ with the full tag list given', async () => {
