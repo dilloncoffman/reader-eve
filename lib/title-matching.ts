@@ -1,7 +1,7 @@
-export interface ParsedEditionTitle {
+export type ParsedEditionTitle = {
   date: string; // 'YYYY-MM-DD'
   half: 'AM' | 'PM';
-}
+};
 
 export function parseEditionTitle(title: string, listLabel: string): ParsedEditionTitle | null {
   const pattern = new RegExp(`^${listLabel} Twitter List: (.+) (AM|PM) Edition$`);

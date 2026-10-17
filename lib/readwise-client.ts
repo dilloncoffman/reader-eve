@@ -1,13 +1,13 @@
 const BASE_URL = 'https://readwise.io/api/v3';
 
-export interface ReaderDocument {
+export type ReaderDocument = {
   id: string;
   title: string;
   tags: string[];
   savedAt: string;
-}
+};
 
-export interface ReadwiseClient {
+export type ReadwiseClient = {
   listDocuments(params: {
     location: string;
     category?: string;
@@ -30,7 +30,7 @@ export interface ReadwiseClient {
   updateDocumentTags(documentId: string, tags: string[]): Promise<void>;
 
   bulkArchive(documentIds: string[]): Promise<void>;
-}
+};
 
 function normalizeTags(rawTags: unknown): string[] {
   if (!rawTags || typeof rawTags !== 'object') return [];

@@ -1,8 +1,8 @@
-export interface SourceConfig {
+export type SourceConfig = {
   key: 'dev' | 'learn';
   listLabel: string;
   lensSkill: string;
-}
+};
 
 export const SOURCES: SourceConfig[] = [
   { key: 'dev', listLabel: 'Dev', lensSkill: 'dev-lens.md' },
