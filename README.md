@@ -50,27 +50,30 @@ Before deploying, add `READWISE_API_TOKEN` to the Vercel project's environment v
 
 After deploy, confirm in the Vercel dashboard under **Settings → Cron Jobs** that `daily-digest` is registered.
 
-**Timezone note:** `agent/schedules/daily-digest.ts` sets `cron: '0 9 * * *'`, assuming Dillon is in America/New_York (5am EST = 9am UTC; Vercel Cron has no DST awareness, so this will fire at 4am local during EDT). **Confirm or correct this before relying on the 5am daily run** — if a different timezone or time is wanted, change the cron expression and redeploy.
+**Timezone note:** `agent/schedules/daily-digest.ts` runs at `0 9 * * *` UTC, which is 5am EDT (America/New_York, confirmed from Vercel's GMT-4 log timestamps) and 4am EST after the clocks go back. Vercel Cron is UTC-only with no DST handling, so the local time shifts by an hour twice a year. Change the cron expression and redeploy if a different time is wanted.
 
-## One-time catch-up pass
+## One-time backlog catch-up
 
-Before the daily schedule's first 5am firing, run the catch-up pass once per source against the deployed agent, so the existing backlog gets digested instead of silently waiting for the next `daily` run (which only ever looks at "yesterday"):
+The daily run only looks at "yesterday", so the existing backlog is digested once by hand. It's planned locally (no 300s function limit) and run one chunk per agent session, which keeps each session's context and runtime bounded:
 
 ```bash
-eve remote connect   # or an authenticated POST to the deployed /eve/v1/session route
+set -a; source .env.local; set +a
+export PATH="/opt/homebrew/bin:$HOME/.npm-global/bin:$PATH"   # Node >=24 and a current vercel CLI
+
+npx tsx scripts/plan-catchup.ts .superpowers/catchup-plan.json   # read-only: scans the feed, writes <=10 date-range chunks per list
+npx tsx scripts/run-catchup.ts .superpowers/catchup-plan.json https://reader-eve.vercel.app
 ```
 
-Then send:
+`run-catchup.ts` goes oldest chunk first (so the newest digests end up on top of the inbox), verifies Reader after each chunk, skips chunks whose digest already exists (safe to restart), and stops at the first problem. The planned backlog on 2026-10-17 was 653 Dev and 659 Learn editions back to October 2025, about 65 editions per chunk.
 
-```
-Run the daily digest for sourceKey dev in mode catchup, then run the daily digest for sourceKey learn in mode catchup.
-```
+Each digest is capped by design at 10 per list and titled with the date range it covers. Source editions end up archived; those worth a closer look also get the `reader-eve` tag.
 
-**Expect this to take a while** — it pages through the entire unarchived backlog per source, and eve's durable sessions are built to survive exactly that.
+## How fetching works
 
-**Before running catch-up for real:** Tasks 1–5's unit tests already cover the load-bearing guarantees (write-before-archive ordering, additive tag preservation, the 10-chunk cap), so running catch-up directly against the real Reader account is reasonable once `npm test` passes. If more confidence is wanted first, point `READWISE_API_TOKEN` at a disposable/test Reader account for one dry run before switching back to the real token.
-
-**What to expect when it's done:** up to 10 new digest documents per list in Reader's inbox (`new` location), each titled with the date range it covers; the `feed` location's previously-unarchived Dev/Learn editions moved to `archive`; any edition judged worth reviewing carries the `reader-eve` tag; and no pre-existing `shortlist`/`mymind` tags removed from any source document.
+- `find_source_editions` lists editions (ids and titles only). In daily mode it filters server-side with `updatedAfter`, so it needs about one page instead of scanning the whole feed.
+- `read_editions` reads content by scanning feed pages with `withHtmlContent=true` (about 100 documents per request, versus one request per document), time-boxed to stay under Vercel's 300s function limit, with a cursor to resume.
+- `create_digest_and_finalize_sources` writes the digest first, and only then tags and archives sources. It reuses an existing digest with the same title rather than creating a duplicate, because Reader does not dedupe `/save/` by url.
+- Reader's API is rate-limited (20 requests/min for `/list/`); `lib/readwise-client.ts` retries 429s up to 5 times honoring `Retry-After`.
 
 ## Architecture notes
 
