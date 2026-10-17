@@ -54,9 +54,15 @@ export default defineTool({
       return { chunks: [] };
     }
 
-    const withContent = await Promise.all(
-      kept.map(async (m) => ({ ...m, content: await client.getDocumentContent(m.documentId) })),
-    );
+    // Sequential, not Promise.all: Reader's /list/ endpoint (which this also
+    // hits) is rate-limited to 20 req/min, and catchup mode can match
+    // hundreds of editions. Firing them all at once would blow well past the
+    // limit before the client's single-retry-after-429 logic has any chance
+    // to help.
+    const withContent: Array<(typeof kept)[number] & { content: string }> = [];
+    for (const m of kept) {
+      withContent.push({ ...m, content: await client.getDocumentContent(m.documentId) });
+    }
 
     const editionMetas: EditionMeta[] = withContent.map((m) => ({ documentId: m.documentId, date: m.date }));
     const chunks = chunkEditionsByDateRange(editionMetas, 10);

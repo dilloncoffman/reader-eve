@@ -48,6 +48,28 @@ describe('fetch_source_editions', () => {
     expect(ids.sort()).toEqual(['am', 'pm']);
   });
 
+  it('fetches edition content sequentially, never more than one getDocumentContent call in flight at once', async () => {
+    const docs = Array.from({ length: 5 }, (_, i) => ({
+      id: `d${i}`,
+      title: `Dev Twitter List: October ${10 + i}, 2026 AM Edition`,
+      tags: [],
+      savedAt: '2026-10-10T09:00:00Z',
+    }));
+    const client = fakeClient(docs);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    client.getDocumentContent = vi.fn().mockImplementation(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return 'tweet content';
+    });
+    await tool.execute({ sourceKey: 'dev', mode: 'catchup' }, { client } as any);
+    expect(maxInFlight).toBe(1);
+    expect(client.getDocumentContent).toHaveBeenCalledTimes(5);
+  });
+
   it('catchup mode never returns more than 10 chunks', async () => {
     const docs = Array.from({ length: 40 }, (_, i) => ({
       id: `d${i}`,
